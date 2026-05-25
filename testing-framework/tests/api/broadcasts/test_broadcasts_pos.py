@@ -21,7 +21,9 @@ def test_create_broadcast_returns_delivered_count(api_as_admin: ApiClient) -> No
 
     resp = api_as_admin.post_json(path_event_broadcasts(event_id), json=payload)
 
-    assert resp.status_code in (200, 201), f"Ожидали 200 или 201, получили {resp.status_code}: {resp.text}"
+    assert resp.status_code in (200, 201), (
+        f"Ожидали 200 или 201, получили {resp.status_code}: {resp.text}"
+    )
     body = resp.json()
 
     # Контракт: рассылка может приходить либо плоско, либо обёрнутой в ключ "broadcast".

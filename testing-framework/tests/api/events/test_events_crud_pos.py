@@ -65,7 +65,9 @@ def test_delete_own_event_then_get_404(api_as_organizer: ApiClient) -> None:
 
     follow_up = api_as_organizer.get(path_event(event_id))
 
-    assert follow_up.status_code == 404, f"Ожидали 404, получили {follow_up.status_code}: {follow_up.text}"
+    assert follow_up.status_code == 404, (
+        f"Ожидали 404, получили {follow_up.status_code}: {follow_up.text}"
+    )
 
 
 def test_create_event_with_builder_online_format(api_as_organizer: ApiClient) -> None:
@@ -97,7 +99,9 @@ def test_create_event_writes_audit_log(
         path_audit_logs(),
         params={"entity_type": "event", "entity_id": event_id, "event_type": "event.created"},
     )
-    assert audit_resp.status_code == 200, f"Ожидали 200, получили {audit_resp.status_code}: {audit_resp.text}"
+    assert audit_resp.status_code == 200, (
+        f"Ожидали 200, получили {audit_resp.status_code}: {audit_resp.text}"
+    )
     logs = audit_resp.json()["items"]
     assert len(logs) >= 1
     assert logs[0]["event_type"] == "event.created"

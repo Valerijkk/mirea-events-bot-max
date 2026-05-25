@@ -58,11 +58,19 @@ def _swap_db_to_inmemory(monkeypatch, tmp_path):
     from app.config import get_settings
     monkeypatch.setattr(get_settings(), "qr_dir", str(tmp_path))
 
+    yield
+
+    # _AWAITING_NAME — глобальный set в handlers; если не чистить между тестами,
+    # user_id из одного теста "застревает" в нём и блокирует команды в следующем.
+    h._AWAITING_NAME.clear()
+
 
 def _seed_user(user_id: int = 100, *, with_consent: bool = True) -> None:
     from app.db import SessionLocal
     with SessionLocal() as s:
-        s.add(User(max_user_id=user_id, chat_id=user_id, name=f"U{user_id}"))
+        # Имя должно быть валидным ФИО (три слова с заглавных), иначе on_message
+        # перехватит любые команды как попытку ввода ФИО.
+        s.add(User(max_user_id=user_id, chat_id=user_id, name="Иванов Иван Иванович"))
         if with_consent:
             s.add(Consent(user_id=user_id, doc_version=CONSENT_VERSION))
         s.commit()
@@ -132,7 +140,7 @@ class TestConsentFlow:
             assert consent.doc_version == CONSENT_VERSION
 
     def test_consent_callback_applies_pending_deeplink(self):
-        """Если юзер пришёл по deeplink — после согласия попадает на карточку."""
+        """После согласия → запрос ФИО → ввод ФИО → карточка мероприятия из deeplink."""
         _seed_user(100, with_consent=False)
         eid = _seed_event(title="Через deeplink")
         from app.db import SessionLocal
@@ -143,8 +151,16 @@ class TestConsentFlow:
             s.commit()
 
         fake = FakeMaxClient()
+        # Шаг 1: клик «Я согласен» → бот должен попросить ФИО
         _run(h.on_callback(
             {"user": {"user_id": 100}, "callback": {"payload": "consent"}},
+            fake,
+        ))
+        assert 100 in h._AWAITING_NAME, "После согласия user_id должен быть в _AWAITING_NAME"
+
+        # Шаг 2: ввод корректного ФИО → бот должен показать карточку мероприятия
+        _run(h.on_message(
+            {"user": {"user_id": 100}, "message": {"body": {"text": "Иванов Иван Иванович"}}},
             fake,
         ))
 

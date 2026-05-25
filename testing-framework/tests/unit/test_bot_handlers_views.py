@@ -44,11 +44,15 @@ def _swap_db(monkeypatch, tmp_path):
     from app.config import get_settings
     monkeypatch.setattr(get_settings(), "qr_dir", str(tmp_path))
 
+    yield
+
+    h._AWAITING_NAME.clear()
+
 
 def _seed_user(uid: int = 100, *, consent: bool = True) -> None:
     from app.db import SessionLocal
     with SessionLocal() as s:
-        s.add(User(max_user_id=uid, chat_id=uid, name=f"U{uid}"))
+        s.add(User(max_user_id=uid, chat_id=uid, name="Петров Пётр Петрович"))
         if consent:
             s.add(Consent(user_id=uid, doc_version=CONSENT_VERSION))
         s.commit()

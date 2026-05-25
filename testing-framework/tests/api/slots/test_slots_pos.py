@@ -66,7 +66,9 @@ def test_delete_slot_idor_returns_403(
         path_event_slots(clean_event["id"]),
         json=_slot_payload(),
     )
-    assert created.status_code == 201, f"Ожидали 201, получили {created.status_code}: {created.text}"
+    assert created.status_code == 201, (
+        f"Ожидали 201, получили {created.status_code}: {created.text}"
+    )
     slot_id = created.json()["id"]
 
     resp = api_as_second_organizer.delete(path_event_slot(clean_event["id"], slot_id))

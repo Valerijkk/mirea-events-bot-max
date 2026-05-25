@@ -18,10 +18,14 @@ def test_list_organizers_admin_only(
 ) -> None:
     """GET /api/v1/organizers доступен только admin."""
     org_resp = api_as_organizer.get(path_organizers())
-    assert org_resp.status_code == 403, f"Ожидали 403, получили {org_resp.status_code}: {org_resp.text}"
+    assert org_resp.status_code == 403, (
+        f"Ожидали 403, получили {org_resp.status_code}: {org_resp.text}"
+    )
 
     admin_resp = api_as_admin.get(path_organizers())
-    assert admin_resp.status_code == 200, f"Ожидали 200, получили {admin_resp.status_code}: {admin_resp.text}"
+    assert admin_resp.status_code == 200, (
+        f"Ожидали 200, получили {admin_resp.status_code}: {admin_resp.text}"
+    )
 
     body = admin_resp.json()
     assert isinstance(body, list)
@@ -51,7 +55,9 @@ def test_create_organizer_returns_201(api_as_admin: ApiClient) -> None:
     assert body["name"] == payload["name"]
 
     cleanup = api_as_admin.delete(path_organizer(body["id"]))
-    assert cleanup.status_code == 200, f"Ожидали 200, получили {cleanup.status_code}: {cleanup.text}"
+    assert cleanup.status_code == 200, (
+        f"Ожидали 200, получили {cleanup.status_code}: {cleanup.text}"
+    )
 
 
 @pytest.mark.api
@@ -73,4 +79,6 @@ def test_delete_self_returns_409_or_403(
 
     resp = api_as_admin.delete(path_organizer(admin_row["id"]))
 
-    assert resp.status_code in (403, 409), f"Ожидали 403 или 409, получили {resp.status_code}: {resp.text}"
+    assert resp.status_code in (403, 409), (
+        f"Ожидали 403 или 409, получили {resp.status_code}: {resp.text}"
+    )

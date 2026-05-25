@@ -60,7 +60,9 @@ def test_spa_login_page_when_dist_built(patched_app):
                 "перезапусти pytest после npm run build",
             )
         assert resp.status_code == 200, f"Ожидали 200, получили {resp.status_code}: {resp.text}"
-        assert "организатор" in resp.text.lower()
+        # SPA — HTML-шаблон, русский текст рендерится React'ом через JS-бандл,
+        # поэтому проверяем только то, что в статике реально присутствует.
+        assert 'id="root"' in resp.text
 
 
 def test_api_events_requires_auth(patched_app):

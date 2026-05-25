@@ -15,10 +15,14 @@ def test_audit_log_endpoint_requires_admin(
 ) -> None:
     """TC-API-AUDIT-001: GET /api/v1/audit-logs возвращает 403 для organizer, 200 для admin."""
     org_resp = api_as_organizer.get(path_audit_logs())
-    assert org_resp.status_code == 403, f"Ожидали 403, получили {org_resp.status_code}: {org_resp.text}"
+    assert org_resp.status_code == 403, (
+        f"Ожидали 403, получили {org_resp.status_code}: {org_resp.text}"
+    )
 
     admin_resp = api_as_admin.get(path_audit_logs())
-    assert admin_resp.status_code == 200, f"Ожидали 200, получили {admin_resp.status_code}: {admin_resp.text}"
+    assert admin_resp.status_code == 200, (
+        f"Ожидали 200, получили {admin_resp.status_code}: {admin_resp.text}"
+    )
 
 
 @pytest.mark.api

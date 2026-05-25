@@ -22,7 +22,9 @@ def test_sync_one_event_creates(api_as_integration: ApiClient) -> None:
 
     resp = api_as_integration.post_json(path_integration_sync(), json=payload)
 
-    assert resp.status_code in (200, 201), f"Ожидали 200 или 201, получили {resp.status_code}: {resp.text}"
+    assert resp.status_code in (200, 201), (
+        f"Ожидали 200 или 201, получили {resp.status_code}: {resp.text}"
+    )
     summary = _summary(resp.json())
 
     # счётчики: ровно одно созданное, ноль обновлённых
@@ -40,7 +42,9 @@ def test_sync_same_external_id_updates(api_as_integration: ApiClient) -> None:
         json={"events": [item]},
     )
 
-    assert first.status_code in (200, 201), f"Ожидали 200 или 201, получили {first.status_code}: {first.text}"
+    assert first.status_code in (200, 201), (
+        f"Ожидали 200 или 201, получили {first.status_code}: {first.text}"
+    )
 
     # повторный sync того же external_id (updated, не дубликат)
     second = api_as_integration.post_json(
@@ -49,5 +53,7 @@ def test_sync_same_external_id_updates(api_as_integration: ApiClient) -> None:
     )
 
     # идемпотентность: вторая запись помечена как updated
-    assert second.status_code in (200, 201), f"Ожидали 200 или 201, получили {second.status_code}: {second.text}"
+    assert second.status_code in (200, 201), (
+        f"Ожидали 200 или 201, получили {second.status_code}: {second.text}"
+    )
     assert _summary(second.json()).get("updated", 0) == 1
