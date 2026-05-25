@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>mirea-events-bot — запись на мероприятия в МАКС</title>
+    <meta name="description" content="Бот для МАКС, который автоматизирует запись абитуриентов на мероприятия университета. Хакатон «Весенний код» РТУ МИРЭА × VK.">
+
+    <link rel="icon" type="image/svg+xml"
+          href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%234f46e5'/%3E%3Cpath d='M7 8h10M7 12h10M7 16h6' stroke='white' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Inter', 'system-ui'], mono: ['JetBrains Mono', 'monospace'] },
+                    colors: {
+                        brand: {
+                            50: '#eef2ff', 100: '#e0e7ff', 200: '#c7d2fe', 300: '#a5b4fc',
+                            400: '#818cf8', 500: '#6366f1', 600: '#4f46e5', 700: '#4338ca',
+                            800: '#3730a3', 900: '#312e81', 950: '#1e1b4b',
+                        },
+                    },
+                    boxShadow: { glow: '0 0 0 1px rgb(99 102 241 / 0.15), 0 12px 32px -8px rgb(99 102 241 / 0.4)' },
+                    animation: {
+                        'fade-up': 'fadeUp 0.7s ease-out',
+                        'fade-in': 'fadeIn 0.5s ease-out',
+                        'float': 'float 6s ease-in-out infinite',
+                    },
+                    keyframes: {
+                        fadeUp: { '0%': { opacity: 0, transform: 'translateY(16px)' }, '100%': { opacity: 1, transform: 'translateY(0)' } },
+                        fadeIn: { '0%': { opacity: 0 }, '100%': { opacity: 1 } },
+                        float: { '0%, 100%': { transform: 'translateY(0)' }, '50%': { transform: 'translateY(-10px)' } },
+                    },
+                },
+            },
+        };
+    </script>
+    <style>
+        body { font-family: 'Inter', sans-serif; font-feature-settings: 'cv11'; }
+        .grid-pattern {
+            background-image:
+                linear-gradient(rgba(99,102,241,0.07) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(99,102,241,0.07) 1px, transparent 1px);
+            background-size: 32px 32px;
+            mask-image: radial-gradient(ellipse at center top, black 30%, transparent 70%);
+        }
+        .gradient-text {
+            background: linear-gradient(135deg, #4f46e5 0%, #818cf8 50%, #4338ca 100%);
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+    </style>
+</head>
+<body class="bg-white text-slate-900 antialiased">
+
+<nav class="border-b border-slate-100 sticky top-0 z-50 bg-white/80 backdrop-blur-lg">
+    <div class="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
+        <a href="/" class="flex items-center gap-2.5">
+            <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-brand-500 to-brand-700 grid place-items-center shadow-glow">
+                <svg class="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                    <path d="M19 4H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z"/>
+                    <line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/>
+                    <line x1="3" y1="10" x2="21" y2="10"/>
+                </svg>
+            </div>
+            <span class="font-bold text-lg">mirea-events-bot</span>
+        </a>
+        <div class="flex items-center gap-1 sm:gap-4">
+            <a href="#features" class="hidden sm:block px-3 py-2 text-sm text-slate-600 hover:text-slate-900">Возможности</a>
+            <a href="#how" class="hidden sm:block px-3 py-2 text-sm text-slate-600 hover:text-slate-900">Как работает</a>
+            <a href="/docs" class="hidden sm:block px-3 py-2 text-sm text-slate-600 hover:text-slate-900">API</a>
+            <a href="/admin" class="px-4 py-2 bg-slate-900 hover:bg-slate-700 text-white rounded-xl text-sm font-medium transition-colors">Войти →</a>
+        </div>
+    </div>
+</nav>
+
+<section class="relative overflow-hidden">
+    <div class="absolute inset-0 grid-pattern"></div>
+    <div class="relative max-w-6xl mx-auto px-6 pt-16 pb-24 lg:pt-24 lg:pb-32">
+        <div class="text-center max-w-3xl mx-auto animate-fade-up">
+            <div class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-brand-50 border border-brand-200 text-brand-700 text-xs font-semibold mb-6">
+                <span class="w-1.5 h-1.5 rounded-full bg-brand-500 animate-pulse"></span>
+                Хакатон «Весенний код» · кейс №2 · трек МАКС
+            </div>
+            <h1 class="text-4xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight leading-tight mb-6">
+                Запись на мероприятия<br/>
+                <span class="gradient-text">в МАКС — за 4 тапа.</span>
+            </h1>
+            <p class="text-lg sm:text-xl text-slate-600 max-w-2xl mx-auto mb-9 leading-relaxed">
+                Бот РТУ МИРЭА для записи студентов и абитуриентов на мероприятия университета: дни открытых дверей, мастер-классы, олимпиады, экскурсии, консультации. С автоматической очередью, QR-пропусками и адресными уведомлениями.
+            </p>
+            <div class="flex flex-wrap items-center justify-center gap-3">
+                {% if bot_username %}
+                <a href="https://max.me/{{ bot_username }}" target="_blank" rel="noopener noreferrer"
+                   class="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-br from-brand-600 to-brand-700 hover:from-brand-700 hover:to-brand-800 text-white rounded-xl font-semibold shadow-glow transition-all">
+                    <svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.6 0 12 0zm5.6 8.3l-1.9 9c-.1.7-.5.8-1.1.5l-3-2.2-1.4 1.4c-.2.2-.3.3-.6.3l.2-3 5.5-5c.2-.2 0-.3-.3-.1l-6.8 4.3-2.9-.9c-.6-.2-.6-.6.1-.9l11.5-4.4c.5-.2 1-.1.7.9z"/></svg>
+                    Открыть бота в МАКС
+                </a>
+                {% endif %}
+                <a href="/admin" class="inline-flex items-center gap-2 px-6 py-3 bg-white border border-slate-200 hover:border-slate-300 text-slate-900 rounded-xl font-semibold transition-colors">
+                    Я организатор — в админку
+                </a>
+            </div>
+            <div class="mt-5 inline-block bg-slate-100 border border-slate-200 rounded-lg px-4 py-2 text-sm">
+                <span class="text-slate-500">🎯 Для жюри:</span>
+                <code class="font-mono text-slate-800">admin@mirea.ru</code>
+                <span class="text-slate-400">/</span>
+                <code class="font-mono text-slate-800">admin12345</code>
+            </div>
+        </div>
+
+        <div class="mt-20 grid grid-cols-2 lg:grid-cols-4 gap-6 max-w-4xl mx-auto animate-fade-up">
+            {% for stat in [
+                ('4 тапа', 'от QR до подтверждения'),
+                ('< 2 сек', 'до получения QR-пропуска'),
+                ('5', 'сегментов рассылок'),
+                ('24ч / 1ч', 'авто-напоминания'),
+            ] %}
+            <div class="text-center">
+                <div class="text-3xl lg:text-4xl font-extrabold text-slate-900">{{ stat[0] }}</div>
+                <div class="text-xs sm:text-sm text-slate-500 mt-1">{{ stat[1] }}</div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</section>
+
+<section id="features" class="py-20 bg-slate-50">
+    <div class="max-w-6xl mx-auto px-6">
+        <div class="text-center mb-14">
+            <div class="text-sm font-semibold text-brand-600 uppercase tracking-wider mb-2">Возможности</div>
+            <h2 class="text-3xl lg:text-4xl font-bold text-slate-900 max-w-2xl mx-auto">Всё, что нужно организатору университетских мероприятий — в одном решении.</h2>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            {% set features = [
+                ('Запись за 4 тапа',
+                 'QR на афише → бот открывает карточку → «Записаться» → QR-пропуск в чате. Без форм и регистраций.',
+                 'M5 13l4 4L19 7', 'from-blue-500 to-blue-700'),
+                ('Лист ожидания с авто-promotion',
+                 'Когда подтверждённый отменяет — место моментально получает первый из очереди, с готовым QR.',
+                 'M12 8v4l3 3M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', 'from-amber-500 to-orange-600'),
+                ('Сегментированные рассылки',
+                 'Один клик — и сообщение уходит только подтверждённым, или только waitlist, или всем сразу. 5 сегментов.',
+                 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z', 'from-violet-500 to-purple-700'),
+                ('QR-сканер на входе',
+                 'Открыли страницу сканера → навели камеру → «✓ Иван Петров» на экране. Защита от повторного прохода и подбора чужих кодов.',
+                 'M3 7V5a2 2 0 0 1 2-2h2 M17 3h2a2 2 0 0 1 2 2v2 M21 17v2a2 2 0 0 1-2 2h-2 M7 21H5a2 2 0 0 1-2-2v-2', 'from-emerald-500 to-emerald-700'),
+                ('Авто-напоминания',
+                 'За 24 часа и за 1 час до начала бот сам пришлёт каждому: где, когда, что взять с собой. No-show падает в разы.',
+                 'M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9 M13.73 21a2 2 0 0 1-3.46 0', 'from-rose-500 to-red-600'),
+                ('REST API + Swagger',
+                 'Полный программный доступ: создание, публикация, рассылки, сканирование, аналитика. JWT-авторизация.',
+                 'M16 18l6-6-6-6 M8 6l-6 6 6 6', 'from-cyan-500 to-teal-700'),
+            ] %}
+            {% for f in features %}
+            <div class="bg-white rounded-2xl border border-slate-200 p-6 hover:border-brand-300 hover:shadow-glow transition-all">
+                <div class="w-12 h-12 rounded-xl bg-gradient-to-br {{ f[3] }} grid place-items-center text-white mb-4">
+                    <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="{{ f[2] }}"/>
+                    </svg>
+                </div>
+                <h3 class="font-semibold text-slate-900 mb-2">{{ f[0] }}</h3>
+                <p class="text-sm text-slate-600 leading-relaxed">{{ f[1] }}</p>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</section>
+
+<section id="how" class="py-20">
+    <div class="max-w-6xl mx-auto px-6">
+        <div class="text-center mb-14">
+            <div class="text-sm font-semibold text-brand-600 uppercase tracking-wider mb-2">Как это работает</div>
+            <h2 class="text-3xl lg:text-4xl font-bold text-slate-900">Простой путь абитуриента</h2>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+            {% for step in [
+                ('1', 'Видит QR на афише', 'Сканирует камерой телефона — открывается МАКС.'),
+                ('2', 'Открывает бота', 'Бот сразу показывает карточку конкретного мероприятия.'),
+                ('3', 'Жмёт «Записаться»', 'Получает мгновенное подтверждение и QR-пропуск.'),
+                ('4', 'Получает напоминания', 'За 24 часа и за 1 час до начала.'),
+            ] %}
+            <div class="relative">
+                <div class="bg-white border border-slate-200 rounded-2xl p-6 h-full hover:border-brand-300 transition-colors">
+                    <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-brand-500 to-brand-700 text-white grid place-items-center font-bold mb-3">{{ step[0] }}</div>
+                    <h4 class="font-semibold text-slate-900 mb-1">{{ step[1] }}</h4>
+                    <p class="text-sm text-slate-500">{{ step[2] }}</p>
+                </div>
+                {% if not loop.last %}
+                <div class="hidden md:block absolute top-12 -right-3 text-slate-300">
+                    <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+                </div>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</section>
+
+<section class="py-20 bg-gradient-to-br from-slate-900 via-brand-950 to-slate-900 text-white relative overflow-hidden">
+    <div class="absolute inset-0 opacity-20"
+         style="background-image: radial-gradient(circle at 20% 30%, rgba(129,140,248,0.4) 0%, transparent 40%), radial-gradient(circle at 80% 70%, rgba(99,102,241,0.4) 0%, transparent 40%);"></div>
+    <div class="relative max-w-6xl mx-auto px-6">
+        <div class="text-center mb-12">
+            <div class="text-sm font-semibold text-brand-300 uppercase tracking-wider mb-2">Стек</div>
+            <h2 class="text-3xl lg:text-4xl font-bold">Современный, проверенный, масштабируемый</h2>
+        </div>
+        <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 max-w-4xl mx-auto">
+            {% for tech in ['Python 3.11', 'FastAPI', 'SQLAlchemy 2.0', 'maxapi', 'APScheduler', 'Tailwind + HTMX'] %}
+            <div class="px-4 py-3 rounded-xl bg-white/5 border border-white/10 backdrop-blur text-center font-mono text-sm hover:bg-white/10 transition-colors">
+                {{ tech }}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</section>
+
+<section class="py-20">
+    <div class="max-w-3xl mx-auto px-6 text-center">
+        <h2 class="text-3xl lg:text-4xl font-bold text-slate-900 mb-4">Готовы попробовать?</h2>
+        <p class="text-lg text-slate-600 mb-8">Зайдите в админку или изучите API — всё на месте.</p>
+        <div class="flex flex-wrap items-center justify-center gap-3">
+            <a href="/admin" class="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-br from-brand-600 to-brand-700 text-white rounded-xl font-semibold shadow-glow hover:from-brand-700 hover:to-brand-800 transition-all">
+                Открыть админку
+            </a>
+            <a href="/docs" class="inline-flex items-center gap-2 px-6 py-3 bg-white border border-slate-200 hover:border-slate-300 text-slate-900 rounded-xl font-semibold transition-colors">
+                Swagger UI
+            </a>
+            <a href="/redoc" class="inline-flex items-center gap-2 px-6 py-3 bg-white border border-slate-200 hover:border-slate-300 text-slate-900 rounded-xl font-semibold transition-colors">
+                ReDoc
+            </a>
+        </div>
+    </div>
+</section>
+
+<footer class="border-t border-slate-100 py-8">
+    <div class="max-w-6xl mx-auto px-6 flex flex-col gap-3">
+        <div class="rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-900">
+            ⚠️ <strong>Дисклеймер.</strong> Этот сервис разработан студенческой командой хакатона
+            «Весенний код» (РТУ МИРЭА × VK) и <strong>не является официальной функцией платформы МАХ</strong>.
+            По вопросам обработки данных — связаться с командой разработки можно через университет (РТУ МИРЭА).
+        </div>
+        <div class="flex flex-wrap items-center justify-between gap-2 text-sm text-slate-500">
+            <div>© mirea-events-bot · хакатон «Весенний код» РТУ МИРЭА × VK · трек МАКС</div>
+            <div class="flex gap-4">
+                <a href="/admin" class="hover:text-slate-900">Админка</a>
+                <a href="/docs" class="hover:text-slate-900">API</a>
+                <a href="/redoc" class="hover:text-slate-900">ReDoc</a>
+                <a href="/api/v1/healthz" class="hover:text-slate-900">Health</a>
+            </div>
+        </div>
+    </div>
+</footer>
+
+</body>
+</html>

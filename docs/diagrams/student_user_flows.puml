@@ -1,0 +1,325 @@
+@startuml
+!theme plain
+skinparam defaultTextAlignment center
+skinparam wrapWidth 250
+skinparam backgroundColor #FEFEFE
+skinparam activityBackgroundColor #E3F2FD
+skinparam activityBorderColor #1565C0
+skinparam activityDiamondBackgroundColor #FFF3E0
+skinparam activityDiamondBorderColor #E65100
+
+title Студент / Абитуриент — User Flows
+
+|Пользователь|
+|Бот|
+|База Данных|
+
+== Первый контакт, согласие и ФИО ==
+
+|Пользователь|
+start
+:Открывает бота в МАКС
+или сканирует QR на афише;
+
+|Бот|
+if (Передан deeplink
+event_xxx?) then (да)
+  :Сохранить pending_deeplink
+в User.pending_deeplink_payload;
+else (нет)
+endif
+
+|База Данных|
+:Проверить наличие
+consent у пользователя;
+
+|Бот|
+if (Согласие уже
+получено и ФИО заполнено?) then (да)
+  if (Есть pending_deeplink?) then (да)
+    :Показать карточку мероприятия;
+  else (нет)
+    :Показать главное меню;
+  endif
+else (нет)
+  :Показать DISCLAIMER
+(разработчик, юр. статус, контакты);
+  :Показать CONSENT_REQUEST
+с кнопкой «✅ Я согласен»;
+
+|Пользователь|
+  :Нажимает «Я согласен»;
+
+|Бот|
+  :grant_consent(user_id)
+запись в таблицу consents;
+
+|База Данных|
+  :INSERT consent
+version = CONSENT_VERSION;
+
+|Бот|
+  :Запрос ФИО субъекта ПДн (ФЗ-152 ст.9):
+«Введите ваше ФИО — три слова,
+каждое с заглавной буквы.
+Пример: Иванов Иван Иванович»;
+
+|Пользователь|
+  :Вводит ФИО текстом;
+
+|Бот|
+  if (Валидация:
+3 слова + каждое с заглавной?) then (да)
+    :user.name = ФИО;
+
+|База Данных|
+    :UPDATE users SET name = ФИО;
+
+|Бот|
+    :NAME_SAVED;
+    if (Есть pending_deeplink?) then (да)
+      :Показать карточку мероприятия;
+    else (нет)
+      :Показать главное меню;
+    endif
+  else (нет — неверный формат)
+    :«Неверный формат.
+Пример: Иванов Иван Иванович»;
+    :Повторный запрос ФИО;
+  endif
+endif
+
+stop
+
+newpage
+
+== Запись на мероприятие (без слотов) ==
+
+|Пользователь|
+start
+:Нажать «📅 Афиша»;
+
+|Бот|
+:Получить active events
+(published, starts_at > now);
+:Показать список inline-кнопок;
+
+|Пользователь|
+:Выбрать мероприятие;
+
+|Бот|
+:Отправить карточку:
+• Тип, название, описание
+• Дата, длительность, формат
+• Свободно X из Y мест;
+
+if (registration_open = False?) then (да)
+  :Скрыть кнопки записи;
+  :Добавить «🚫 Регистрация закрыта»;
+  stop
+else (нет)
+endif
+
+|Пользователь|
+:Нажать «✅ Записаться»;
+
+|Бот|
+:Показать SIGNUP_SUMMARY
+(сводка мероприятия);
+
+|Пользователь|
+:Нажать «✅ Подтверждаю»;
+
+|Бот|
+:Вызов sign_up(event_id, user_id);
+
+|База Данных|
+if (confirmed_count < capacity?) then (да)
+  :INSERT Registration
+status = CONFIRMED;
+  :Генерация qr_token (32 hex);
+  :Генерация кода RG-XXXXXX;
+
+|Бот|
+  :Отправить REG_CONFIRMED + код;
+  :Отправить QR-картинку;
+  :schedule_reminders()
+(за 24ч и за 1ч до старта);
+else (нет)
+  :INSERT Registration
+status = WAITLIST;
+  :waitlist_position = MAX + 1;
+
+|Бот|
+  :Отправить REG_WAITLIST
+с позицией в очереди;
+endif
+
+stop
+
+newpage
+
+== Запись на мероприятие (со слотами) ==
+
+|Пользователь|
+start
+:Нажать «✅ Записаться»;
+
+|Бот|
+if (У мероприятия
+есть слоты?) then (да)
+  :Показать клавиатуру слотов:
+  «12:00 — свободно 3»
+  «14:00 — свободно 0»
+  «16:00 — свободно 5»;
+
+|Пользователь|
+  :Выбрать слот;
+
+|Бот|
+  :Показать сводку
+с конкретным слотом;
+
+|Пользователь|
+  :Нажать «✅ Подтверждаю»;
+
+|Бот|
+  :sign_up(slot_id=...);
+
+|База Данных|
+  if (Свободно места
+в слоте?) then (да)
+    :INSERT Registration
+status = CONFIRMED;
+    :Генерация qr_token + кода;
+
+|Бот|
+    :Отправить CONFIRMED + QR;
+    :Напоминания привязаны
+к slot.starts_at;
+  else (нет)
+    :INSERT Registration
+status = WAITLIST (per-slot);
+    :waitlist_position в рамках слота;
+
+|Бот|
+    :Отправить WAITLIST + позиция;
+  endif
+else (нет)
+  :Перейти к обычной записи
+(без слотов);
+endif
+
+stop
+
+newpage
+
+== Мои записи + повторный QR ==
+
+|Пользователь|
+start
+:Нажать «🎟 Мои записи»;
+
+|Бот|
+:Для каждой активной записи — карточка с кнопками:
+• «❌ Отменить запись»
+• «🎫 Получить QR» — повторная отправка QR-пропуска
+• «📅 В календарь»
+• «🔕 Тише по этому» / «🔔 Снова с уведомлениями»;
+
+:Архив (cancelled/attended) — одним сообщением;
+
+|Пользователь|
+:Нажать «🎫 Получить QR»
+для конкретной записи;
+
+|Бот|
+if (status = CONFIRMED
+или WAITLIST?) then (да)
+  :Генерация QR из qr_token;
+  :Отправить QR-картинку;
+else (нет)
+  :«QR недоступен для этой записи»;
+endif
+
+stop
+
+newpage
+
+== Отмена записи ==
+
+|Пользователь|
+start
+:Открыть «🎟 Мои записи»;
+:Выбрать запись → «❌ Отменить»;
+:Подтвердить отмену «Да»;
+
+|Бот|
+:cancel_registration(reg_id);
+
+|База Данных|
+if (Мероприятие уже
+началось?) then (да)
+  if (Политика late_cancel
+= DISALLOW?) then (да)
+    |Бот|
+    :LATE_CANCEL_FORBIDDEN;
+    :Статус не меняется;
+    stop
+  else (ALLOW_MARKED)
+    :UPDATE status = LATE_CANCELLED;
+    :cancelled_at = now();
+    |Бот|
+    :LATE_CANCEL_DONE;
+    note right
+      Место НЕ возвращается
+      confirmed_count не уменьшается
+      Никто из waitlist не продвигается
+    end note
+    stop
+  endif
+else (нет)
+  :UPDATE status = CANCELLED;
+  :confirmed_count -= 1;
+
+  if (Есть waitlist?) then (да)
+    :_shift_waitlist_positions();
+    :Promote первого из waitlist;
+    :Новому: REG_CONFIRMED + QR;
+    |Бот|
+    :Отменившему: CANCEL_DONE + «📅 Афиша»;
+    :Новому участнику: CONFIRMED + QR;
+  else (нет)
+    |Бот|
+    :CANCEL_DONE + «📅 Афиша»;
+  endif
+endif
+
+stop
+
+newpage
+
+== Управление уведомлениями ==
+
+|Пользователь|
+start
+:Открыть «🎟 Мои записи»;
+
+|Бот|
+:Per-event управление:
+• «🔕 Тише по этому»
+  → Reg.notifications_enabled = False
+  → REG_NOTIFICATION_TOGGLED_OFF
+• «🔔 Снова с уведомлениями»
+  → Reg.notifications_enabled = True
+  → REG_NOTIFICATION_TOGGLED_ON;
+
+:Глобальное управление:
+• /notify_off
+  → User.notifications_enabled = False
+• /notify_on
+  → User.notifications_enabled = True;
+
+stop
+
+@enduml

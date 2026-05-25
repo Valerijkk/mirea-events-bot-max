@@ -1,0 +1,210 @@
+@startuml
+!theme plain
+skinparam defaultTextAlignment center
+skinparam wrapWidth 250
+skinparam backgroundColor #FEFEFE
+skinparam activityBackgroundColor #E8F5E9
+skinparam activityBorderColor #2E7D32
+skinparam activityDiamondBackgroundColor #FFF3E0
+skinparam activityDiamondBorderColor #E65100
+
+title Организатор — User Flows
+
+== Вход в React SPA и дашборд ==
+
+actor "Организатор" as Org
+participant "React SPA\n(:80 или :5173)" as SPA
+participant "REST API\n(/api/v1)" as API
+database "БД" as DB
+
+Org -> SPA: Браузер → /login
+Org -> SPA: Ввод email + пароль
+
+SPA -> API: POST /api/v1/auth/login\n{email, password}
+
+API -> API: Rate limit\n≤5 req/мин с IP?
+
+alt Превышен rate limit
+  API -> SPA: 429 Too Many Requests
+  SPA -> Org: «Слишком много попыток, подождите»
+else В пределах лимита
+  API -> DB: SELECT Organizer по email
+  API -> API: bcrypt verify password
+
+  alt Верные данные
+    API -> SPA: 200 {access_token, role}
+    SPA -> SPA: Сохранить JWT в localStorage\n("mirea-auth")
+    SPA -> Org: Редирект на /events
+
+    Org -> SPA: Дашборд мероприятий:\n• Список карточек\n• Счётчики записей/посещений\n• Поиск и фильтры по статусу
+  else Неверные данные
+    API -> SPA: 401 Unauthorized
+    SPA -> Org: «Неверный email или пароль»
+  end
+end
+
+newpage
+
+== Создание и публикация мероприятия ==
+
+actor "Организатор" as Org2
+participant "React SPA" as SPA2
+participant "REST API" as API2
+database "БД" as DB2
+
+Org2 -> SPA2: /events → «Создать мероприятие»
+Org2 -> SPA2: Заполнить форму в модальном окне:\n• Название, описание, тип\n• Дата/время, длительность\n• Формат (онлайн/очно)\n• Требования, условия отмены\n• Политика поздней отмены\n• Лимит мест (capacity)\n• URL обложки, URL встречи
+
+SPA2 -> API2: POST /api/v1/events\nAuthorization: Bearer <jwt>
+API2 -> API2: Валидация Pydantic-схемы
+API2 -> DB2: INSERT Event\nstatus = DRAFT
+
+API2 -> SPA2: 201 Created {id: 42}
+SPA2 -> Org2: Редирект на /events/42
+
+Org2 -> SPA2: Кнопка «Опубликовать»
+SPA2 -> API2: POST /api/v1/events/42/status\n{"status": "published"}
+API2 -> DB2: UPDATE status = PUBLISHED\nГенерация deeplink_payload (UUID)
+API2 -> SPA2: 200 OK {deeplink_payload: "abc123"}
+
+SPA2 -> Org2: Готовая ссылка:\nhttps://max.me/<bot>?start=event_abc123
+Org2 -> Org2: Копировать deeplink\n→ разместить на афише
+
+newpage
+
+== Управление слотами ==
+
+actor "Организатор" as Org3
+participant "React SPA" as SPA3
+participant "REST API" as API3
+database "БД" as DB3
+
+Org3 -> SPA3: /events/:id/slots
+SPA3 -> API3: GET /api/v1/events/:id/slots
+API3 -> DB3: SELECT event_slots
+API3 -> SPA3: Список слотов с заполненностью
+
+Org3 -> SPA3: Добавить слот:\nstarts_at, ends_at,\ncapacity, label
+SPA3 -> API3: POST /api/v1/events/:id/slots
+API3 -> DB3: INSERT event_slot
+API3 -> SPA3: 201 Created
+
+Org3 -> SPA3: Просмотр заполненности:\nзанято / capacity
+
+Org3 -> SPA3: Удалить слот
+SPA3 -> API3: DELETE /api/v1/events/:id/slots/:slot_id
+API3 -> DB3: UPDATE registrations\nSET slot_id = NULL\nWHERE slot_id = deleted_id
+API3 -> SPA3: 200 OK
+
+newpage
+
+== Просмотр участников и управление ==
+
+actor "Организатор" as Org4
+participant "React SPA" as SPA4
+participant "REST API" as API4
+database "БД" as DB4
+
+Org4 -> SPA4: /events/:id\n(секция «Участники»)
+SPA4 -> API4: GET /api/v1/events/:id/registrations
+API4 -> DB4: SELECT registrations JOIN users
+API4 -> SPA4: Список с KPI-карточками:\n• Подтверждено\n• Лист ожидания\n• Посетили\n• Отменили
+
+Org4 -> SPA4: Поиск по коду RG-XXXXXX
+
+SPA4 -> SPA4: Фильтрация по статусу
+Org4 -> SPA4: Действия:\n• [✓ Пришёл] → mark_attended()\n• [✕ Отменить] → cancelled_by_organizer
+
+SPA4 -> API4: POST /api/v1/events/:id/registrations/:reg_id/attend
+API4 -> DB4: UPDATE attended_at = now()\nstatus = ATTENDED
+
+newpage
+
+== QR-сканер ==
+
+actor "Организатор" as Org5
+participant "React SPA\n(/events/:id/scanner)" as SPA5
+participant "REST API" as API5
+database "БД" as DB5
+
+Org5 -> SPA5: Открыть /events/:id/scanner\n(оптимизирован для мобильного)
+Org5 -> SPA5: Включить камеру (jsQR)
+Org5 -> SPA5: Навести на QR участника
+
+SPA5 -> API5: POST /api/v1/scan\n{qr_token: "...", event_id: 42}\nAuthorization: Bearer <jwt>
+
+API5 -> DB5: SELECT Registration по qr_token
+
+alt QR валиден, статус CONFIRMED
+  API5 -> DB5: UPDATE attended_at = now()\nstatus = ATTENDED
+  API5 -> SPA5: 200 {ok: true, user_name: "Иван Петров"}
+  SPA5 -> Org5: «✅ Иван Петров — пришёл»
+
+  alt notifications_enabled = True
+    API5 -> API5: Уведомление пользователю\n«Спасибо, что пришли!»
+  end
+else QR уже погашен (ATTENDED)
+  API5 -> SPA5: 409 Conflict
+  SPA5 -> Org5: «❌ Уже отмечен»
+else QR не найден
+  API5 -> SPA5: 404 Not Found
+  SPA5 -> Org5: «❌ QR не найден»
+else Статус CANCELLED
+  API5 -> SPA5: 400 Bad Request
+  SPA5 -> Org5: «❌ Запись отменена»
+end
+
+Org5 -> SPA5: Ручной ввод qr_token\n(если камера не работает)
+
+newpage
+
+== Рассылка участникам ==
+
+actor "Организатор" as Org6
+participant "React SPA" as SPA6
+participant "REST API" as API6
+database "БД" as DB6
+
+Org6 -> SPA6: /events/:id/broadcasts
+SPA6 -> API6: GET /api/v1/events/:id/broadcasts
+API6 -> SPA6: История рассылок
+
+Org6 -> SPA6: Выбрать шаблон или ввести текст
+Org6 -> SPA6: Выбрать сегмент:\n• All\n• Confirmed\n• Waitlist\n• Attended\n• No_show
+
+SPA6 -> API6: POST /api/v1/events/:id/broadcasts\n{message, segment}
+API6 -> DB6: get_recipients(event_id, segment)\n• Фильтр по статусу\n• notifications_enabled = True (User + Reg)
+
+API6 -> API6: Последовательная отправка\nrate-limit 50мс/сообщение
+
+API6 -> SPA6: 200 {delivered_count: 48, failed_count: 2}
+SPA6 -> Org6: «Доставлено 48 из 50»
+
+newpage
+
+== Отмена мероприятия ==
+
+actor "Организатор" as Org7
+participant "React SPA" as SPA7
+participant "REST API" as API7
+database "БД" as DB7
+
+Org7 -> SPA7: Страница /events/:id\n→ «Отменить мероприятие»
+
+SPA7 -> API7: POST /api/v1/events/:id/status\n{"status": "cancelled"}
+API7 -> DB7: UPDATE status = CANCELLED
+API7 -> API7: notify_event_cancelled()
+API7 -> DB7: SELECT confirmed + waitlist
+API7 -> API7: Рассылка EVENT_CANCELLED_NOTICE\nвсем с учётом notifications_enabled
+
+API7 -> API7: process_due_reminders\nпроверяет status=CANCELLED\n→ напоминания не отправляются
+
+API7 -> SPA7: 200 OK
+SPA7 -> Org7: Статус мероприятия: CANCELLED
+
+note right
+  В «Мои записи» пользователей
+  записи отображаются как «отменено организатором»
+end note
+
+@enduml

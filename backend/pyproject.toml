@@ -1,0 +1,130 @@
+[project]
+name = "mirea-events-bot"
+version = "0.1.0"
+description = "Запись абитуриентов на мероприятия через мессенджер МАКС (РТУ МИРЭА × VK × 1С)."
+requires-python = ">=3.11"
+license = { text = "MIT" }
+readme = "README.md"
+
+# Зависимости — в requirements.txt (для воспроизводимой установки `pip install -r`).
+# Dev-зависимости — в requirements-dev.txt.
+
+# =============================================================================
+# Ruff — линтер и форматтер.
+# =============================================================================
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = [
+  "data",
+  ".venv",
+]
+
+[tool.ruff.lint]
+# Что включаем:
+#   E,W,F   — pyflakes + pycodestyle (классика).
+#   B       — bugbear (реальные баги).
+#   SIM     — simplifiable.
+#   UP      — pyupgrade (современный синтаксис).
+#   I       — сортировка импортов.
+#   C4      — comprehensions.
+#   RET     — лишние return.
+#   PIE     — мелкие улучшения.
+select = ["E", "W", "F", "B", "SIM", "UP", "I", "C4", "RET", "PIE"]
+
+# Что игнорируем сознательно:
+#   B008    — FastAPI идиома `=Depends(...)` в default-аргументе. Не баг.
+#   E501    — длинные строки: код на русском + URL'ы в docstring'ах.
+#   RUF001/002/003 — кириллица в строках/комментариях. Проект на русском.
+#   SIM105  — `try/except/pass` — иногда понятнее, чем `contextlib.suppress`.
+#   UP007/UP045 — `X | None` vs `Optional[X]`: оставляем смешанный стиль до Py3.10+.
+ignore = [
+  "B008",
+  "E501",
+  "RUF001",
+  "RUF002",
+  "RUF003",
+  "SIM105",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Тесты: разрешаем длинные имена и assert.
+"../testing-framework/tests/**/*.py" = ["E731", "B017", "B018", "F811"]
+# Seed/демо в app/cli — разрешаем print, getpass и магические числа.
+"app/cli/**/*.py" = ["T201", "PLR2004"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+# =============================================================================
+# Pytest.
+# =============================================================================
+[tool.pytest.ini_options]
+# Тесты живут в `testing-framework/tests/` (как unit, так и API/UI/E2E).
+# Запуск из корня: `python -m pytest testing-framework/tests/unit -m unit`
+# или из `testing-framework/`: `python -m pytest -m unit`.
+testpaths = ["../testing-framework/tests/unit"]
+addopts = "-ra --strict-markers"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+filterwarnings = [
+  "ignore::DeprecationWarning:passlib.*",
+  "ignore::PendingDeprecationWarning:starlette.*",
+]
+
+# =============================================================================
+# Mypy — статическая типизация.
+# Прагматичный уровень: ловим явные баги, но не требуем 100% аннотаций.
+# Поэтапное ужесточение — за счёт `[[tool.mypy.overrides]]` ниже.
+# =============================================================================
+[tool.mypy]
+python_version = "3.11"
+files = ["app"]
+exclude = ['app/cli/.*']
+
+# Базовая строгость: ловим явные баги.
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_unreachable = true
+no_implicit_optional = true
+check_untyped_defs = true
+
+# Pydantic v2 plugin даёт точные типы для моделей и Field().
+plugins = ["pydantic.mypy"]
+
+# Сторонние библиотеки без полных stub'ов — не валим из-за их недотипизированности.
+[[tool.mypy.overrides]]
+module = [
+  "passlib.*",
+  "qrcode.*",
+  "apscheduler.*",
+  "PIL.*",
+]
+ignore_missing_imports = true
+
+# bot.handlers — много динамики (request.form, ORM-связи), точечный отказ от строгости.
+[[tool.mypy.overrides]]
+module = [
+  "app.bot.handlers",
+]
+disable_error_code = ["assignment", "arg-type", "return-value", "attr-defined", "union-attr", "no-any-return", "call-arg", "index"]
+
+# =============================================================================
+# Coverage.
+# =============================================================================
+[tool.coverage.run]
+source = ["app"]
+branch = true
+omit = [
+  "app/cli/*",
+  "app/db_init.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+  "pragma: no cover",
+  "raise NotImplementedError",
+  "if TYPE_CHECKING:",
+  "if __name__ == .__main__.:",
+]

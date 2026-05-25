@@ -1,0 +1,856 @@
+@startuml
+!theme plain
+skinparam defaultTextAlignment center
+skinparam wrapWidth 280
+skinparam backgroundColor #FEFEFE
+skinparam sequenceArrowThickness 2
+skinparam participantBackgroundColor #E3F2FD
+skinparam participantBorderColor #1565C0
+skinparam databaseBackgroundColor #FFF8E1
+skinparam databaseBorderColor #F57F17
+skinparam actorBackgroundColor #E8F5E9
+skinparam actorBorderColor #2E7D32
+
+title Дополнительные граничные сценарии (25+)
+
+== ГРУППА 1: Регистрация и записи ==
+
+newpage
+
+=== Сценарий 1: Повторная запись после отмены (переиспользование строки) ===
+
+actor "Пользователь" as U1
+participant "Бот" as B1
+database "БД" as DB1
+
+U1 -> B1: Записаться на мероприятие X
+B1 -> DB1: sign_up(event_id, user_id)
+DB1 -> DB1: INSERT Registration
+status=CONFIRMED, qr_token=OLD, code=OLD
+B1 -> U1: CONFIRMED + RG-OLD + QR-OLD
+
+U1 -> B1: Отменить запись
+B1 -> DB1: cancel_registration()
+DB1 -> DB1: UPDATE status=CANCELLED
+qr_token обнулён/стёрт
+
+U1 -> B1: Записаться снова на X
+B1 -> DB1: sign_up(event_id, user_id)
+note right
+  Уникальный констрейнт (event_id, user_id)
+  → строка переиспользуется
+end note
+DB1 -> DB1: UPDATE Registration
+status=CONFIRMED
+qr_token=NEW (32 hex)
+code=NEW (RG-XXXXXX)
+B1 -> U1: CONFIRMED + RG-NEW + QR-NEW
+
+newpage
+
+=== Сценарий 2: Попытка записи на DRAFT мероприятие ===
+
+actor "Пользователь" as U2
+participant "Бот" as B2
+database "БД" as DB2
+
+U2 -> B2: /start event_draft_123
+B2 -> DB2: SELECT Event WHERE deeplink_payload='draft_123'
+DB2 --> B2: status=DRAFT
+
+alt Через deeplink
+  B2 -> U2: «Мероприятие пока не опубликовано»
+  note right
+    DRAFT не показывается в афише,
+    но deeplink может быть утечкой
+  end note
+else Через API
+  B2 -> U2: 404 или «Регистрация недоступна»
+end
+
+newpage
+
+=== Сценарий 3: Попытка записи на CANCELLED мероприятие ===
+
+actor "Пользователь" as U3
+participant "Бот" as B3
+database "БД" as DB3
+
+U3 -> B3: Открыть карточку мероприятия Y
+B3 -> DB3: SELECT status
+DB3 --> B3: status=CANCELLED
+
+B3 -> U3: Карточка с бейджем «ОТМЕНЕНО»
+B3 -> U3: Кнопки записи СКРЫТЫ
+B3 -> U3: «Регистрация закрыта»
+
+note right
+  В «Мои записи» такая запись
+  показывается как «отменено организатором»
+end note
+
+newpage
+
+=== Сценарий 4: Попытка записи на FINISHED мероприятие ===
+
+actor "Пользователь" as U4
+participant "Бот" as B4
+database "БД" as DB4
+
+U4 -> B4: Открыть карточку мероприятия Z
+B4 -> DB4: SELECT starts_at, status
+DB4 --> B4: starts_at < now(), status=FINISHED
+
+B4 -> U4: «Мероприятие уже прошло»
+B4 -> U4: Кнопки записи СКРЫТЫ
+
+newpage
+
+=== Сценарий 5: Удаление мероприятия с активными записями ===
+
+actor "Организатор" as O5
+participant "Админка" as A5
+database "БД" as DB5
+
+O5 -> A5: DELETE /api/v1/events/{id}\nAuthorization: Bearer <jwt>
+A5 -> DB5: DELETE FROM events WHERE id=...
+
+note right
+  ON DELETE CASCADE:
+  • registrations удаляются
+  • event_slots удаляются
+  • broadcasts удаляются
+  • reminders удаляются
+end note
+
+DB5 --> A5: CASCADE выполнен
+A5 -> O5: 200 OK «Мероприятие удалено»
+
+U5 -> B5: «🎟 Мои записи»
+B5 -> DB5: SELECT registrations
+DB5 --> B5: Запись на удалённое событие отсутствует
+B5 -> U5: «Нет активных записей»
+
+newpage
+
+=== Сценарий 6: Удаление слота с подтверждёнными записями ===
+
+actor "Организатор" as O6
+participant "Админка" as A6
+database "БД" as DB6
+
+O6 -> A6: Удалить слот "14:00"
+A6 -> DB6: DELETE FROM event_slots WHERE id=...
+
+note right
+  Записи НЕ удаляются!
+  slot_id обнуляется → NULL
+  capacity теперь берётся
+  с Event.capacity
+end note
+
+DB6 -> DB6: UPDATE registrations
+SET slot_id = NULL
+WHERE slot_id = deleted_id
+
+A6 -> O6: Слот удалён, записи перенесены
+в общий пул мероприятия
+
+newpage
+
+=== Сценарий 7: Конкурентная запись на последний слот ===
+
+actor "Пользователь А" as UA7
+actor "Пользователь Б" as UB7
+participant "Бот" as B7
+database "БД" as DB7
+
+== Слот "12:00", capacity=5, confirmed=4, 1 место ==
+
+UA7 -> B7: Выбрать слот "12:00"
+UB7 -> B7: Выбрать слот "12:00"
+
+UA7 -> B7: Подтверждаю (t=0)
+B7 -> DB7: BEGIN
+B7 -> DB7: SELECT confirmed_in_slot = 4
+B7 -> DB7: INSERT status=CONFIRMED
+B7 -> DB7: COMMIT
+
+UB7 -> B7: Подтверждаю (t=+30мс)
+B7 -> DB7: BEGIN
+B7 -> DB7: SELECT confirmed_in_slot = 5
+B7 -> DB7: capacity (5) <= confirmed (5)
+B7 -> DB7: INSERT status=WAITLIST (per-slot)
+B7 -> DB7: COMMIT
+
+B7 -> UA7: CONFIRMED
+B7 -> UB7: WAITLIST поз.1
+
+newpage
+
+=== Сценарий 8: Изменение capacity вниз (меньше чем confirmed_count) ===
+
+actor "Организатор" as O8
+participant "Админка" as A8
+database "БД" as DB8
+
+== Было: capacity=20, confirmed=18 ==
+
+O8 -> A8: PATCH /api/v1/events/{id}
+capacity = 15
+A8 -> DB8: UPDATE capacity = 15
+
+note right
+  confirmed_count (18) > capacity (15)
+  → 3 записи "виснут" в confirmed,
+  но новые записи идут в waitlist
+
+  Логика sign_up() проверяет
+  confirmed_count < capacity
+  → новые = WAITLIST
+end note
+
+A8 -> O8: 200 OK (предупреждение в UI)
+
+== Новая запись ==
+U8 -> B8: Записаться
+B8 -> DB8: confirmed_count=18, capacity=15
+B8 -> DB8: INSERT status=WAITLIST
+B8 -> U8: WAITLIST поз.1
+
+newpage
+
+== ГРУППА 2: QR и сканирование ==
+
+=== Сценарий 9: Двойное сканирование одного QR ===
+
+actor "Организатор" as O9
+participant "Сканер" as S9
+database "БД" as DB9
+
+O9 -> S9: Сканировать QR пользователя
+S9 -> DB9: SELECT по qr_token
+DB9 --> S9: status=CONFIRMED, attended_at=NULL
+
+DB9 -> DB9: UPDATE attended_at=now(), status=ATTENDED
+S9 -> O9: «Иван Петров — пришёл ✅»
+S9 -> U9: «Спасибо, что пришли!»
+
+== Тот же QR сканирует второй организатор ==
+
+O9b -> S9: Сканировать тот же QR
+S9 -> DB9: SELECT по qr_token
+DB9 --> S9: status=ATTENDED, attended_at=2026-05-24T10:00:00
+
+S9 -> O9b: «❌ QR уже погашен»
+S9 -> O9b: «Уже отмечен в 10:00»
+
+newpage
+
+=== Сценарий 10: Сканирование QR отменённой записи ===
+
+actor "Организатор" as O10
+participant "Сканер" as S10
+database "БД" as DB10
+
+O10 -> S10: Сканировать QR
+S10 -> DB10: SELECT по qr_token
+DB10 --> S10: status=CANCELLED (или LATE_CANCELLED)
+
+S10 -> O10: «❌ Запись отменена»
+S10 -> O10: «Отметка не сохранена»
+
+note right
+  attended_at не обновляется
+  статус не меняется
+end note
+
+newpage
+
+=== Сценарий 11: Сканирование QR от другого мероприятия ===
+
+actor "Организатор" as O11
+participant "Сканер" as S11
+database "БД" as DB11
+
+== Организатор сканирует на мероприятии X ==
+
+O11 -> S11: Сканировать QR
+S11 -> DB11: SELECT Registration + Event
+DB11 --> S11: qr_token найден,
+но event_id = Y (другое мероприятие)
+
+S11 -> O11: «❌ QR от другого мероприятия»
+S11 -> O11: «Ожидалось: Мастер-класс X»
+S11 -> O11: «Найдено: Олимпиада Y»
+
+newpage
+
+=== Сценарий 12: Ручной ввод невалидного токена ===
+
+actor "Организатор" as O12
+participant "Сканер" as S12
+database "БД" as DB12
+
+O12 -> S12: Ввести qr_token вручную: "abc123"
+S12 -> DB12: SELECT по qr_token
+DB12 --> S12: NOT FOUND
+
+S12 -> O12: «❌ QR не найден»
+S12 -> O12: «Проверьте код или отсканируйте снова»
+
+newpage
+
+== ГРУППА 3: Уведомления и напоминания ==
+
+=== Сценарий 13: Напоминание за 24ч, но пользователь отменил за 23ч ===
+
+actor "Пользователь" as U13
+participant "APScheduler" as SCH
+database "БД" as DB13
+
+== Напоминание remind_at = 2026-05-24 09:00 ==
+
+U13 -> B13: Отменить запись в 09:30
+B13 -> DB13: UPDATE status=CANCELLED
+
+SCH -> DB13: process_due_reminders()
+в 09:00 (cron каждую минуту)
+DB13 --> SCH: Reminder найден
+registration.status=CANCELLED
+
+SCH -> SCH: sent=True (чтобы не шлём)
+SCH -> SCH: Пропуск отправки
+
+note right
+  Проверка в process_due_reminders:
+  если регистрация отменена →
+  помечаем sent=True, не шлём
+end note
+
+newpage
+
+=== Сценарий 14: Напоминание за 1ч, но мероприятие отменено ===
+
+actor "Организатор" as O14
+participant "APScheduler" as SCH14
+database "БД" as DB14
+
+== Мероприятие запланировано на 14:00 ==
+
+O14 -> A14: Отменить мероприятие в 13:00
+A14 -> DB14: UPDATE events.status=CANCELLED
+A14 -> DB14: notify_event_cancelled()
+
+SCH14 -> DB14: process_due_reminders()
+в 13:00
+DB14 --> SCH14: Reminder найден
+event.status=CANCELLED
+
+SCH14 -> SCH14: sent=True
+SCH14 -> SCH14: «Не шлём: мероприятие отменено»
+
+newpage
+
+=== Сценарий 15: Бот заблокировал пользователя → рассылка failed ===
+
+actor "Организатор" as O15
+participant "Рассылка" as BR15
+participant "MAX API" as MAX15
+database "БД" as DB15
+
+O15 -> BR15: Создать рассылку
+segment=confirmed
+
+BR15 -> DB15: get_recipients()
+DB15 --> BR15: 50 пользователей
+
+loop Для каждого пользователя (rate-limit 50мс)
+  BR15 -> MAX15: send_text(chat_id, message)
+
+  alt Пользователь заблокировал бота
+    MAX15 --> BR15: 403 Forbidden
+    BR15 -> BR15: failed_count += 1
+    BR15 -> DB15: Лог: «бот заблокирован»
+  else Успех
+    MAX15 --> BR15: 200 OK
+    BR15 -> BR15: delivered_count += 1
+  end
+end
+
+BR15 -> O15: Результат: delivered=48, failed=2
+
+newpage
+
+=== Сценарий 16: Глобальная отписка (/notify_off) ===
+
+actor "Пользователь" as U16
+participant "Бот" as B16
+database "БД" as DB16
+
+U16 -> B16: /notify_off
+B16 -> DB16: UPDATE users
+notifications_enabled = False
+B16 -> U16: «Уведомления отключены глобально»
+
+== Организатор делает рассылку ==
+O16 -> BR16: Рассылка confirmed
+BR16 -> DB16: get_recipients()
+DB16 --> BR16: SELECT с фильтром
+User.notifications_enabled=True
+
+note right
+  Пользователь U16 исключён
+  из списка recipients
+end note
+
+BR16 -> O16: U16 не получил сообщение
+
+newpage
+
+=== Сценарий 17: Per-event отключение уведомлений ===
+
+actor "Пользователь" as U17
+participant "Бот" as B17
+database "БД" as DB17
+
+U17 -> B17: «🎟 Мои записи» → «🔕 Тише по этому»
+B17 -> DB17: UPDATE registrations
+notifications_muted = True
+B17 -> U17: «Уведомления по этому мероприятию отключены»
+
+== Организатор делает рассылку по этому событию ==
+O17 -> BR17: Рассылка all
+BR17 -> DB17: get_recipients()
+DB17 --> BR17: SELECT с фильтром
+Reg.notifications_enabled=True
+
+note right
+  U17 исключён из рассылки
+  по конкретному событию,
+  но получает от других
+end note
+
+newpage
+
+== ГРУППА 4: Безопасность и доступ ==
+
+=== Сценарий 18: Организатор пытается редактировать чужое мероприятие (IDOR) ===
+
+actor "Организатор А" as OA18
+participant "REST API" as A18
+database "БД" as DB18
+
+== Организатор А создал event_id=5 ==
+== Организатор Б создал event_id=6 ==
+
+OA18 -> A18: PATCH /api/v1/events/6\nAuthorization: Bearer <jwt_orgА>\n(чужое мероприятие)
+A18 -> DB18: SELECT event_id=6\norganizer_id = Б
+
+A18 -> A18: assert_event_owned(event, organizer_A)
+A18 -> A18: organizer_id (А) != event.organizer_id (Б)
+A18 -> A18: AND role != admin
+
+A18 -> OA18: 403 Forbidden
+A18 -> OA18: «Нет доступа к этому мероприятию»
+
+newpage
+
+=== Сценарий 19: Admin редактирует любое мероприятие ===
+
+actor "Админ" as AD19
+participant "REST API" as A19
+database "БД" as DB19
+
+AD19 -> A19: PATCH /api/v1/events/6\nAuthorization: Bearer <jwt_admin>
+A19 -> DB19: SELECT event_id=6
+DB19 --> A19: organizer_id = Б
+
+A19 -> A19: assert_event_owned(event, admin)
+A19 -> A19: role == admin → ОБХОД проверки
+
+A19 -> DB19: UPDATE event
+A19 -> AD19: 200 OK «Сохранено»
+
+newpage
+
+=== Сценарий 20: JWT expired при запросе к API ===
+
+actor "Клиент" as CL20
+participant "REST API" as API20
+
+CL20 -> API20: GET /api/v1/events
+Authorization: Bearer eyJ... (истёкший)
+
+API20 -> API20: Декодировать JWT
+API20 -> API20: exp < now()
+
+API20 -> CL20: 401 Unauthorized
+API20 -> CL20: «Токен истёк»
+
+CL20 -> API20: POST /api/v1/auth/login
+API20 -> CL20: Новый access_token
+
+CL20 -> API20: GET /api/v1/events
+Authorization: Bearer NEW
+API20 -> CL20: 200 OK + список
+
+newpage
+
+=== Сценарий 21: Запрос без токена (Unauthorized) ===
+
+actor "Пользователь" as O21
+participant "REST API" as A21
+
+== Запрос без Authorization-заголовка ==
+O21 -> A21: GET /api/v1/events\n(без Bearer токена)
+A21 -> A21: CurrentOrganizer dep:\nBearer отсутствует
+A21 -> O21: 401 Unauthorized\n{"detail": "Not authenticated"}
+
+== React SPA перехватывает 401 ==
+O21 -> O21: axios-interceptor → Редирект /login
+
+== Запрос с истёкшим JWT ==
+O21 -> A21: GET /api/v1/events\nAuthorization: Bearer expired_token
+A21 -> A21: decode_token() → PyJWTError\n(exp < now)
+A21 -> O21: 401 Unauthorized\n{"detail": "Token expired"}
+
+note right
+  JSON REST + Bearer token:
+  CSRF невозможен by design —
+  нет cookie-аутентификации,
+  нет HTML-форм с side effects
+end note
+
+newpage
+
+=== Сценарий 22: Rate limit на /api/v1/auth/login ===
+
+actor "Злоумышленник" as Z22
+participant "REST API" as A22
+
+Z22 -> A22: POST /api/v1/auth/login\n{"email":"admin@mirea.ru","password":"wrong1"}\n(попытка 1)
+A22 -> Z22: 401 Unauthorized\n{"detail": "Invalid credentials"}
+
+Z22 -> A22: POST /api/v1/auth/login\npass=wrong2 (попытка 5)
+A22 -> Z22: 401 Unauthorized
+
+Z22 -> A22: POST /api/v1/auth/login\npass=wrong3 (попытка 6)
+A22 -> A22: Rate limit: 5 req/мин по IP
+A22 -> Z22: 429 Too Many Requests\n{"detail": "Rate limit exceeded"}
+
+note right
+  Защита: 5 попыток в минуту
+  с одного IP-адреса.
+  User-enum защита: одинаковый
+  текст ошибки для wrong-pass
+  и unknown-email
+end note
+
+newpage
+
+=== Сценарий 23: Rate limit на /api/v1/scan ===
+
+actor "Организатор" as O23
+participant "Сканер API" as S23
+
+O23 -> S23: POST /api/v1/scan (1)
+S23 -> O23: 200 OK
+
+... (59 запросов за минуту) ...
+
+O23 -> S23: POST /api/v1/scan (61)
+S23 -> S23: Rate limit: 60/мин по организатору
+S23 -> O23: 429 Too Many Requests
+
+newpage
+
+== ГРУППА 5: Админка и управление ==
+
+=== Сценарий 24: Создание организатора через CLI ===
+
+actor "Разработчик" as DEV24
+participant "CLI" as CLI24
+database "БД" as DB24
+
+DEV24 -> CLI24: python -m app.cli.init_project
+CLI24 -> DB24: CREATE TABLE (если нет)
+CLI24 -> DB24: INSERT Organizer
+email=admin@mirea.ru
+password_hash=bcrypt("admin12345")
+role=admin
+
+CLI24 -> DB24: INSERT Organizer
+email=iptip@mirea.ru
+role=organizer
+
+CLI24 -> DB24: Парсинг событий МИРЭА
+(scripts/fetch_mirea_events.py)
+
+CLI24 -> DEV24: Bootstrap завершён
+
+newpage
+
+=== Сценарий 25: Защита от самопонижения роли ===
+
+actor "Админ Иван" as AI25
+participant "REST API" as A25
+database "БД" as DB25
+
+AI25 -> A25: GET /api/v1/organizers\nAuthorization: Bearer <jwt_admin>
+A25 -> DB25: SELECT organizers
+DB25 --> A25: [Иван(admin), Петя(organizer)]
+
+AI25 -> A25: PATCH /api/v1/organizers/self_id\n{"role": "organizer"}
+A25 -> A25: Проверка: target_id == current_admin.id?
+A25 -> A25: ДА → БЛОКИРОВКА
+
+A25 -> AI25: 403 Forbidden\n«Нельзя изменить собственную роль»
+
+newpage
+
+=== Сценарий 26: Экспорт CSV списка участников ===
+
+actor "Организатор" as O26
+participant "REST API" as A26
+database "БД" as DB26
+
+O26 -> A26: GET /api/v1/events/{id}/registrations/export\nAuthorization: Bearer <jwt>
+A26 -> DB26: SELECT registrations\nJOIN users\nWHERE event_id={id}
+
+A26 -> A26: Формирование CSV:\nname,code,status,slot,registered_at\n(префикс ' для formula injection защиты)
+
+A26 -> O26: Content-Type: text/csv\nContent-Disposition: attachment;\nfilename="participants_{id}.csv"
+
+newpage
+
+=== Сценарий 27: Дублирование мероприятия ===
+
+actor "Организатор" as O27
+participant "REST API" as A27
+database "БД" as DB27
+
+O27 -> A27: POST /api/v1/events/5/duplicate\nAuthorization: Bearer <jwt>
+A27 -> DB27: SELECT * FROM events WHERE id=5
+DB27 --> A27: Полные данные оригинала
+
+A27 -> DB27: INSERT new_event:\n• title, description, type\n• location, capacity\n• requirements, cancellation_terms\n• late_cancel_policy
+
+A27 -> DB27: Очищено:\n• starts_at = NULL\n• ends_at = NULL\n• status = DRAFT\n• deeplink_payload = NEW_UUID
+
+A27 -> O27: 201 Created {id: NEW_ID}
+note right
+  React SPA перенаправляет
+  на /events/NEW_ID для редактирования
+end note
+
+newpage
+
+== ГРУППА 6: API и интеграция ==
+
+=== Сценарий 28: 422 при создании мероприятия (неверный формат starts_at) ===
+
+actor "Клиент" as CL28
+participant "REST API" as API28
+
+CL28 -> API28: POST /api/v1/events
+{"starts_at": "20 мая 2026"}
+
+API28 -> API28: Pydantic валидация
+API28 -> API28: starts_at: str не соответствует
+ISO 8601 (2026-05-20T14:00:00)
+
+API28 -> CL28: 422 Unprocessable Entity
+API28 -> CL28: {
+  "detail": [{
+    "loc": ["body", "starts_at"],
+    "msg": "invalid datetime format",
+    "type": "value_error.datetime"
+  }]
+}
+
+newpage
+
+=== Сценарий 29: Bulk-sync с невалидным X-API-Key ===
+
+actor "ИС вуза" as IS29
+participant "REST API" as API29
+database "БД" as DB29
+
+IS29 -> API29: POST /api/v1/integration/events/sync
+X-API-Key: wrong_key_123
+
+API29 -> DB29: SELECT integration_keys
+WHERE key_hash = bcrypt(wrong_key)
+DB29 --> API29: NOT FOUND
+
+API29 -> IS29: 401 Unauthorized
+API29 -> IS29: «Неверный или отозванный API-ключ»
+
+newpage
+
+=== Сценарий 30: Bulk-sync идемпотентность ===
+
+actor "ИС вуза" as IS30
+participant "REST API" as API30
+database "БД" as DB30
+
+== Первый запрос ==
+IS30 -> API30: POST /sync
+source="mirea_priem"
+external_id="evt_999"
+title="День открытых дверей"
+
+API30 -> DB30: SELECT по (source, external_id)
+DB30 --> API30: NOT FOUND
+
+API30 -> DB30: INSERT Event
+source=mirea_priem
+external_id=evt_999
+API30 -> IS30: 201 Created {id: 42}
+
+== Второй запрос (тот же external_id) ==
+IS30 -> API30: POST /sync
+source="mirea_priem"
+external_id="evt_999"
+title="День открытых дверей (обновлён)"
+
+API30 -> DB30: SELECT по (source, external_id)
+DB30 --> API30: FOUND id=42
+
+API30 -> DB30: UPDATE Event
+title = новое значение
+API30 -> IS30: 200 OK {id: 42, updated: true}
+
+newpage
+
+== ГРУППА 7: Инфраструктура и данные ==
+
+=== Сценарий 31: Перезапуск приложения → напоминания не дублируются ===
+
+participant "APScheduler" as SCH31
+database "БД" as DB31
+
+== Перезапуск в 10:05 ==
+SCH31 -> SCH31: process_due_reminders()
+каждую минуту
+
+SCH31 -> DB31: SELECT reminders
+WHERE remind_at <= now()
+AND sent = False
+
+DB31 --> SCH31: Reminder remind_at=09:30
+sent=False
+
+SCH31 -> SCH31: Проверка: remind_at (09:30) < now() (10:05)
+→ ПРОПУСК (время прошло)
+SCH31 -> DB31: UPDATE sent = True
+
+note right
+  Напоминания, чьё время уже прошло,
+  помечаются sent=True, но НЕ отправляются.
+  Дальнейшие напоминания идут по расписанию.
+end note
+
+newpage
+
+=== Сценарий 32: Потеря БД PostgreSQL после docker compose down -v ===
+
+actor "Разработчик" as DEV32
+participant "Docker" as SYS32
+participant "PostgreSQL" as PG32
+
+DEV32 -> SYS32: docker compose down -v\n(флаг -v удаляет volumes!)
+SYS32 -> PG32: Удалить volume pgdata
+PG32 -> PG32: Все данные потеряны
+
+DEV32 -> SYS32: docker compose up -d --build
+SYS32 -> PG32: Создать новый volume pgdata
+SYS32 -> PG32: Запустить PostgreSQL 17
+
+DEV32 -> SYS32: docker compose exec backend\npython -m app.cli.init_project
+SYS32 -> PG32: CREATE TABLEs + seed admin + события МИРЭА
+
+SYS32 -> DEV32: БД пустая (без флага -v данные целы)
+
+note right
+  Безопасный вариант: docker compose down
+  (без -v) — volume pgdata сохраняется.
+  Бэкап: pg_dump -U mirea mirea_events > backup.sql
+  Восстановление: psql -U mirea mirea_events < backup.sql
+end note
+
+newpage
+
+=== Сценарий 33: Бэкап и восстановление PostgreSQL ===
+
+actor "DevOps" as D33
+participant "Docker" as DK33
+participant "PostgreSQL" as PG33
+
+== Бэкап ==
+D33 -> DK33: docker compose exec db\npg_dump -U mirea mirea_events > backup.sql
+DK33 -> PG33: pg_dump
+PG33 --> D33: backup.sql (~полный дамп)
+
+== Восстановление на новом стенде ==
+D33 -> DK33: docker compose up -d db
+D33 -> DK33: docker compose exec db\npsql -U mirea mirea_events < backup.sql
+DK33 -> PG33: Восстановление данных
+PG33 --> D33: Данные загружены
+
+D33 -> DK33: docker compose up -d --build
+DK33 -> D33: Приложение работает\nна восстановленной БД
+
+note right
+  QR-кеш (data/qr/) восстанавливается
+  автоматически — qr_token хранится в БД,
+  QR генерируется при первом запросе.
+  data/qr/ бэкапить необязательно.
+end note
+
+newpage
+
+=== Сценарий 34: Дублирование сообщений (два процесса uvicorn) ===
+
+actor "Пользователь" as U34
+participant "Процесс 1" as P1
+participant "Процесс 2" as P2
+
+U34 -> P1: /start
+P1 -> U34: «Главное меню»
+
+U34 -> P2: /start (тот же webhook)
+P2 -> U34: «Главное меню»
+
+U34 -> U34: «Сообщение пришло дважды!»
+
+note right
+  Причина: запущено два процесса uvicorn.
+  Решение: ps aux | grep uvicorn
+  → kill лишнего процесса
+end note
+
+newpage
+
+=== Сценарий 35: Бот молчит на /start ===
+
+actor "Пользователь" as U35
+participant "Бот" as B35
+participant "MAX API" as MAX35
+
+U35 -> B35: /start
+B35 -> MAX35: GET /me (проверка токена)
+MAX35 --> B35: 401 Unauthorized
+
+B35 -> B35: Лог: «Неверный BOT_TOKEN»
+B35 -> U35: ❌ Нет ответа
+
+note right
+  Решения:
+  1. Проверить BOT_TOKEN в .env
+  2. Активировать бота у @MasterBot
+  3. LOG_LEVEL=DEBUG make dev
+end note
+
+@enduml

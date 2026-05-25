@@ -1,0 +1,51 @@
+# Виртуальные окружения
+.venv/
+venv/
+env/
+
+# Docker / конфиденциальное
+.env
+.env.local
+.env.*.local
+
+# Артефакты и кеши
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.benchmarks/
+
+# Локальные данные и сгенерированные файлы (БД, QR, ics)
+data/
+*.db
+*.sqlite
+*.sqlite3
+*.log
+*.err
+sut.*
+
+# Инструменты разработки и CI-артефакты — только для локальной работы
+scripts/
+reports/
+handoff/
+.planning/
+.cursor/
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Локальные заметки / выгрузки сдачи — не для репозитория
+сдача.txt
+сдача*.txt
+
+.claude/

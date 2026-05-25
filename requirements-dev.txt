@@ -1,0 +1,17 @@
+# Зависимости для разработки и CI.
+# Прод-зависимости — в requirements.txt.
+
+-r backend/requirements.txt
+
+# --- Тестирование ---
+pytest==8.3.3
+pytest-asyncio==0.24.0
+coverage==7.6.4
+
+# --- Качество кода ---
+ruff==0.7.2
+mypy==1.13.0
+
+# --- Безопасность ---
+bandit==1.7.10
+pip-audit==2.7.3

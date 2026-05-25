@@ -1,0 +1,239 @@
+@startuml
+!theme plain
+skinparam defaultTextAlignment center
+skinparam wrapWidth 250
+skinparam backgroundColor #FEFEFE
+skinparam activityBackgroundColor #F3E5F5
+skinparam activityBorderColor #6A1B9A
+skinparam activityDiamondBackgroundColor #FFF3E0
+skinparam activityDiamondBorderColor #E65100
+
+title Администратор — User Flow
+
+actor "Администратор" as Admin
+participant "React SPA\n(/organizers)" as SPA
+participant "REST API\n(/api/v1)" as API
+database "БД" as DB
+
+== Управление организаторами ==
+
+Admin -> SPA: /organizers\n(доступно только admin)
+SPA -> API: GET /api/v1/organizers\nAuthorization: Bearer <jwt>
+API -> API: Проверка AdminOrganizer dep\n(role != admin → 403)
+API -> DB: SELECT * FROM organizers
+API -> SPA: Список организаторов
+
+Admin -> SPA: Форма создания:\n• Email, пароль (≥8 символов)\n• Имя, кафедра/отдел\n• Роль: organizer / admin
+Admin -> SPA: Сохранить
+
+SPA -> API: POST /api/v1/organizers\nAuthorization: Bearer <jwt>
+API -> API: bcrypt(password)
+API -> DB: INSERT Organizer
+API -> SPA: 201 Created
+
+Admin -> SPA: Список всех организаторов
+Admin -> SPA: Для каждого (кроме себя):\n• [↓ → organizer]\n• [↑ → admin]
+
+SPA -> API: PATCH /api/v1/organizers/:id\n{"role": "organizer"}
+
+API -> API: Проверка:\ntarget_id == current_admin.id?
+
+alt Попытка понизить себя
+  API -> SPA: 403 Forbidden
+  SPA -> Admin: «Нельзя изменить роль самому себе»
+else Другой организатор
+  API -> DB: UPDATE role
+  API -> SPA: 200 OK
+  SPA -> Admin: Роль изменена
+end
+
+newpage
+
+title Граничные сценарии и интеграция
+
+== Сценарий: Гонка за последнее место (Race Condition) ==
+
+actor "Пользователь А" as A
+actor "Пользователь Б" as B
+participant "Бот" as Bot
+database "БД" as DB
+
+== Осталось 1 место (19/20) ==
+
+A -> Bot: Нажать «Записаться»
+Bot -> A: Показать сводку (ещё не подтверждено)
+
+B -> Bot: Нажать «Записаться»
+Bot -> B: Показать сводку (ещё не подтверждено)
+
+== Подтверждение ==
+
+A -> Bot: «Подтверждаю» (t=0)
+Bot -> DB: BEGIN TRANSACTION
+Bot -> DB: SELECT confirmed_count = 19
+Bot -> DB: INSERT Registration (status=CONFIRMED)
+Bot -> DB: UPDATE event.confirmed_count = 20
+Bot -> DB: COMMIT
+Bot -> A: CONFIRMED + RG-XXXXXX + QR-картинка
+
+B -> Bot: «Подтверждаю» (t=+50мс)
+Bot -> DB: BEGIN TRANSACTION
+Bot -> DB: SELECT confirmed_count = 20
+Bot -> DB: capacity (20) <= confirmed_count (20)
+Bot -> DB: INSERT Registration (status=WAITLIST)
+Bot -> DB: waitlist_position = 1
+Bot -> DB: COMMIT
+Bot -> B: WAITLIST + позиция 1
+
+note right
+  Гарантия: уникальный констрейнт (event_id, user_id)
+  + проверка capacity внутри транзакции sign_up()
+  исключают овербукинг (confirmed_count > capacity)
+end note
+
+newpage
+
+== Сценарий: Автопродвижение из waitlist ==
+
+actor "Пользователь А\n(confirmed)" as A
+actor "Пользователь В\n(waitlist, поз.1)" as B
+actor "Пользователь Г\n(waitlist, поз.2)" as G
+participant "Бот" as Bot2
+database "БД" as DB2
+
+== Заполнено 20/20, waitlist: [В(1), Г(2)] ==
+
+A -> Bot2: Отменить запись
+Bot2 -> DB2: cancel_registration(A)
+
+Bot2 -> DB2: UPDATE Registration\nstatus = cancelled (А)
+Bot2 -> DB2: confirmed_count -= 1
+
+Bot2 -> DB2: _shift_waitlist_positions()
+
+Bot2 -> DB2: SELECT первый из waitlist (Пользователь В)
+Bot2 -> DB2: UPDATE Registration\nstatus = confirmed,\nqr_token = NEW,\ncode = NEW (В)
+Bot2 -> B: REG_CONFIRMED + новый QR
+
+Bot2 -> DB2: UPDATE Registration\nwaitlist_position = 1 (Г, был 2)
+Bot2 -> G: Уведомление: позиция изменилась
+
+note right
+  Результат: 20/20 confirmed
+  waitlist = [Г(поз.1)]
+end note
+
+newpage
+
+== Сценарий: Поздняя отмена (Late Cancel) ==
+
+actor "Пользователь" as U
+participant "Бот" as Bot3
+database "БД" as DB3
+
+== Мероприятие уже началось ==
+
+U -> Bot3: Отменить запись
+Bot3 -> DB3: cancel_registration()
+
+alt Политика DISALLOW
+  Bot3 -> DB3: Проверка: starts_at < now() И policy = disallow
+  Bot3 -> U: LATE_CANCEL_FORBIDDEN
+  Bot3 -> DB3: Статус остаётся CONFIRMED
+else Политика ALLOW_MARKED
+  Bot3 -> DB3: Проверка: starts_at < now() И policy = allow_marked
+  Bot3 -> DB3: UPDATE status = LATE_CANCELLED, cancelled_at = now()
+  Bot3 -> U: LATE_CANCEL_DONE
+  note right
+    Место НЕ возвращается
+    confirmed_count не уменьшается
+    Никто из waitlist не продвигается
+  end note
+end
+
+newpage
+
+== Сценарий: Сканирование при отключенных уведомлениях ==
+
+actor "Пользователь" as U2
+actor "Организатор" as O
+participant "Сканер" as Scanner
+participant "Сервер" as Server
+database "БД" as DB4
+
+== Уведомления отключены per-event ==
+
+U2 -> Server: Нажал «🔕 Тише по этому»
+Server -> DB4: UPDATE Registration\nnotifications_enabled = False
+
+== На входе ==
+
+O -> Scanner: Сканирует QR пользователя
+Scanner -> Server: POST /api/v1/scan\nqr_token = xxx
+
+Server -> DB4: SELECT Registration по qr_token
+Server -> DB4: UPDATE attended_at = now(), status = ATTENDED
+
+alt notifications_enabled = False
+  Server -> Server: Попытка отправить «Спасибо, что пришли»
+  Server -> Server: Проверка: False → Пропуск отправки
+else notifications_enabled = True
+  Server -> U2: «Спасибо, что пришли!»
+end
+
+Server -> Scanner: Ответ: {ok: true, user_name: "Иван"}
+
+newpage
+
+== Сценарий: Дублирование мероприятия ==
+
+actor "Организатор" as O2
+participant "React SPA" as SPA2
+participant "REST API" as API2
+database "БД" as DB5
+
+O2 -> SPA2: Страница /events/:id → «Дублировать»
+SPA2 -> API2: POST /api/v1/events/:id/duplicate
+API2 -> DB5: SELECT оригинальное событие
+
+API2 -> DB5: INSERT новое событие:\n• title = оригинал.title\n• description = оригинал.description\n• type = оригинал.type\n• location = оригинал.location\n• capacity = оригинал.capacity\n• requirements = оригинал.requirements\n• cancellation_terms = оригинал.cancellation_terms
+
+API2 -> DB5: Очищается:\n• starts_at = NULL\n• ends_at = NULL\n• status = DRAFT\n• deeplink_payload = NEW_UUID
+
+API2 -> SPA2: 201 Created {id: NEW_ID}
+SPA2 -> O2: Переход на /events/NEW_ID (редактирование нового)
+
+newpage
+
+== Сценарий: Bulk-импорт из ИС вуза ==
+
+actor "ИС вуза\n(priem.mirea.ru)" as IS
+participant "REST API" as API3
+database "БД" as DB6
+
+IS -> API3: POST /api/v1/integration/events/sync
+IS -> API3: Header: X-API-Key: ***
+
+API3 -> API3: Валидация X-API-Key\n(поиск по key_hash)
+
+loop Для каждого события в payload
+  API3 -> DB6: SELECT по (source, external_id)
+
+  alt Событие существует
+    API3 -> DB6: UPDATE полей
+    API3 -> API3: Идемпотентность сохранена
+  else Новое событие
+    API3 -> DB6: INSERT событие
+    API3 -> DB6: organizer_id = владелец ключа
+
+    alt auto_publish = True
+      API3 -> DB6: status = PUBLISHED
+    else auto_publish = False
+      API3 -> DB6: status = DRAFT
+    end
+  end
+end
+
+API3 -> IS: 200 OK + список созданных/обновлённых ID
+
+@enduml
